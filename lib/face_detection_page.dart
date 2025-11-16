@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
@@ -29,6 +30,8 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
   int currentActionIndex = 0;
   bool waitingForNeutral = false;
   bool verificationComplete = false;
+  bool isCaptured = false;
+  Uint8List? capturedImage;
 
   double? smilingProbability;
   double? leftEyeOpenProbability;
@@ -39,7 +42,6 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
   void initState() {
     super.initState();
     initializeCamera();
-    // Removed shuffle to maintain fixed order
   }
 
   // Initialize the camera controller
@@ -106,10 +108,10 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
 
         if (!verificationComplete) {
           checkChallenge(face);
-        } else {
+        } else if (!isCaptured) {
           // After verification, check if face is straight and capture
           if (isFaceStraight(face)) {
-            autoCapture();
+            await captureImage();
           }
         }
       }
@@ -188,12 +190,34 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
             (face.headEulerAngleY! > -5 && face.headEulerAngleY! < 5));
   }
 
-  // Auto capture when face is straight after verification
-  void autoCapture() {
-    // Stop the camera stream
-    cameraController.stopImageStream();
+  // Capture image when face is straight after verification
+  Future<void> captureImage() async {
+    try {
+      // Stop the camera stream first
+      cameraController.stopImageStream();
 
-    // Navigate back with success result
+      // Take the picture
+      final XFile file = await cameraController.takePicture();
+
+      // Read the image file as bytes
+      final Uint8List imageBytes = await file.readAsBytes();
+
+      if (mounted) {
+        setState(() {
+          isCaptured = true;
+          capturedImage = imageBytes;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error capturing image: $e');
+      // If capture fails, navigate back
+      if (mounted) {
+        Navigator.pop(context, true);
+      }
+    }
+  }
+
+  void proceedToNext() {
     if (mounted) {
       Navigator.pop(context, true);
     }
@@ -201,7 +225,9 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
 
   @override
   void dispose() {
-    cameraController.stopImageStream();
+    if (!isCaptured) {
+      cameraController.stopImageStream();
+    }
     faceDetector.close();
     cameraController.dispose();
     super.dispose();
@@ -217,77 +243,182 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
         title: const Text("Verify Your Identity"),
       ),
       body: isCameraInitialized
-          ? Stack(
-        children: [
-          Positioned.fill(
-            child: CameraPreview(cameraController),
+          ? isCaptured
+          ? _buildCapturedImage()
+          : _buildCameraView()
+          : const Center(child: CircularProgressIndicator()),
+    );
+  }
+
+  Widget _buildCameraView() {
+    return Stack(
+      children: [
+        // Full camera preview
+        Positioned.fill(
+          child: CameraPreview(cameraController),
+        ),
+        // White overlay with circular cutout
+        CustomPaint(
+          painter: HeadMaskPainter(),
+          child: Container(),
+        ),
+        Positioned(
+          top: 16,
+          left: 16,
+          right: 16,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.7),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                if (!verificationComplete) ...[
+                  Text(
+                    'Please ${getActionDescription(challengeActions[currentActionIndex])}',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Step ${currentActionIndex + 1} of ${challengeActions.length}',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                ] else ...[
+                  const Text(
+                    'Verification Complete!',
+                    style: TextStyle(
+                        color: Colors.green,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Please look straight at the camera',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Auto capturing...',
+                    style: TextStyle(
+                        color: Colors.yellow,
+                        fontSize: 14),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ],
+            ),
           ),
-          CustomPaint(
-            painter: HeadMaskPainter(),
-            child: Container(),
-          ),
-          Positioned(
-            top: 16,
-            left: 16,
-            right: 16,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.7),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                children: [
-                  if (!verificationComplete) ...[
-                    Text(
-                      'Please ${getActionDescription(challengeActions[currentActionIndex])}',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Step ${currentActionIndex + 1} of ${challengeActions.length}',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16),
-                      textAlign: TextAlign.center,
-                    ),
-                  ] else ...[
-                    const Text(
-                      'Verification Complete!',
-                      style: TextStyle(
-                          color: Colors.green,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Please look straight at the camera',
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Auto capturing...',
-                      style: TextStyle(
-                          color: Colors.yellow,
-                          fontSize: 14),
-                      textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCapturedImage() {
+    return Column(
+      children: [
+        Expanded(
+          child: Container(
+            color: Colors.white,
+            child: Center(
+              child: Container(
+                width: 300,
+                height: 300,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.amberAccent,
+                    width: 3,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.3),
+                      blurRadius: 10,
+                      spreadRadius: 2,
                     ),
                   ],
-                ],
+                ),
+                child: ClipOval(
+                  child: capturedImage != null
+                      ? Image.memory(
+                    capturedImage!,
+                    fit: BoxFit.cover,
+                    width: 300,
+                    height: 300,
+                  )
+                      : Container(
+                    color: Colors.grey[300],
+                    child: const Icon(
+                      Icons.person,
+                      size: 100,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
-        ],
-      )
-          : const Center(child: CircularProgressIndicator()),
+        ),
+        Container(
+          padding: const EdgeInsets.all(20),
+          color: Colors.white,
+          child: Column(
+            children: [
+              const Text(
+                'Identity Verified Successfully!',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.green,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Your photo has been captured and verified.',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.black87,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: proceedToNext,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.amberAccent,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Continue',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -308,29 +439,24 @@ class _FaceDetectionPageState extends State<FaceDetectionPage> {
   }
 }
 
-// Custom painter for head mask with white background
+// Custom painter for head mask with white background outside circle
 class HeadMaskPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    // White background
-    final backgroundPaint = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.fill;
-
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), backgroundPaint);
-
-    // Circular cutout for camera
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = size.width * 0.35; // Slightly smaller circle
+    final radius = size.width * 0.35;
 
+    // Create a path for the white overlay (outside the circle)
     final path = Path()
-      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
+    // Start with the circle (this will be the cutout)
       ..addOval(Rect.fromCircle(center: center, radius: radius))
+    // Then add the entire rectangle around it
+      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
       ..fillType = PathFillType.evenOdd;
 
-    // Semi-transparent overlay around the circle
+    // Draw white overlay outside the circle
     final overlayPaint = Paint()
-      ..color = Colors.black.withOpacity(0.7)
+      ..color = Colors.white
       ..style = PaintingStyle.fill;
 
     canvas.drawPath(path, overlayPaint);
@@ -342,6 +468,27 @@ class HeadMaskPainter extends CustomPainter {
       ..strokeWidth = 3.0;
 
     canvas.drawCircle(center, radius, borderPaint);
+
+    // Add instructional text in the white area
+    final textPainter = TextPainter(
+      text: const TextSpan(
+        text: 'Position your face within the circle',
+        style: TextStyle(
+          color: Colors.black54,
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+    textPainter.paint(
+      canvas,
+      Offset(
+        (size.width - textPainter.width) / 2,
+        size.height * 0.15,
+      ),
+    );
   }
 
   @override
